@@ -112,33 +112,35 @@ const Profile = () => {
           </motion.div>
 
           {/* Wallet Panel */}
-          <div className="space-y-6">
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-              className="bg-slate-900 rounded-3xl p-6 text-white relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/20 blur-3xl rounded-full pointer-events-none" />
-              <div className="flex items-center justify-between mb-8 relative z-10">
-                <div className="flex items-center gap-2">
-                  <Wallet className="text-green-400" size={24} />
-                  <h3 className="font-bold text-slate-100">Charge Wallet</h3>
+          {profile.role !== 'admin' && (
+            <div className="space-y-6">
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+                className="bg-slate-900 rounded-3xl p-6 text-white relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/20 blur-3xl rounded-full pointer-events-none" />
+                <div className="flex items-center justify-between mb-8 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="text-green-400" size={24} />
+                    <h3 className="font-bold text-slate-100">Charge Wallet</h3>
+                  </div>
                 </div>
-              </div>
-              <div className="relative z-10">
-                <span className="text-slate-400 font-medium text-sm">Available Balance</span>
-                <div className="text-5xl font-black mt-2 mb-8 flex items-baseline gap-1">
-                  <span className="text-green-400 text-3xl">₹</span>
-                  {profile.walletBalance?.toFixed(2) || '0.00'}
+                <div className="relative z-10">
+                  <span className="text-slate-400 font-medium text-sm">Available Balance</span>
+                  <div className="text-5xl font-black mt-2 mb-8 flex items-baseline gap-1">
+                    <span className="text-green-400 text-3xl">₹</span>
+                    {profile.walletBalance?.toFixed(2) || '0.00'}
+                  </div>
+                  <button 
+                    onClick={() => setShowAppModal(true)}
+                    className="w-full bg-green-500 hover:bg-green-400 text-slate-900 font-bold py-3.5 rounded-xl transition-colors flex justify-center items-center gap-2"
+                  >
+                    <Wallet size={18} /> Add Money via App
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setShowAppModal(true)}
-                  className="w-full bg-green-500 hover:bg-green-400 text-slate-900 font-bold py-3.5 rounded-xl transition-colors flex justify-center items-center gap-2"
-                >
-                  <Wallet size={18} /> Add Money via App
-                </button>
-              </div>
-            </motion.div>
-          </div>
+              </motion.div>
+            </div>
+          )}
 
         </div>
       </div>

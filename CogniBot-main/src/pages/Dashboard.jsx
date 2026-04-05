@@ -16,12 +16,19 @@ const Dashboard = () => {
       try {
         const q = query(
           collection(db, 'bookings'),
-          where('userId', '==', currentUser.uid),
-          orderBy('createdAt', 'desc'),
-          limit(10)
+          where('userId', '==', currentUser.uid)
         );
         const snap = await getDocs(q);
-        setBookings(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const rawBookings = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Sort locally to completely avoid Firebase composite index errors!
+        rawBookings.sort((a, b) => {
+          const timeA = a.createdAt?.seconds || 0;
+          const timeB = b.createdAt?.seconds || 0;
+          return timeB - timeA;
+        });
+        
+        setBookings(rawBookings.slice(0, 10));
       } catch (err) {
         console.error("Failed fetching bookings: ", err);
       }

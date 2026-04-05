@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'dart:ui';
+import 'package:geolocator/geolocator.dart';
+import 'dart:math';
 
-// --- IMPORT YOUR MAP PAGE HERE ---
-import 'map_screen.dart'; 
+import '../services/station_service.dart';
+import '../models/station_model.dart';
+import 'map_screen.dart';
 
 class VehicleScreen extends StatefulWidget {
   const VehicleScreen({super.key});
@@ -16,265 +17,459 @@ class VehicleScreen extends StatefulWidget {
 }
 
 class _VehicleScreenState extends State<VehicleScreen> {
-  static const Color kPrimaryGreen = Color(0xFF00D261);
-  static const Color kBackground = Color(0xFFF9FBFA);
-  static const Color kCardWhite = Colors.white;
+  static const Color kPrimaryGreen = Color(0xFF28C76F); // Original Green
   static const Color kTextDark = Color(0xFF1A1D1E);
+  static const double _fallbackLat = 21.1702;
+  static const double _fallbackLng = 72.8311;
+  static const List<String> _stationImageUrls = [
+    'https://images.unsplash.com/photo-1620067676674-0f2b2c8acdd6?q=80&w=1200&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1593941707882-a5bba14938cb?q=80&w=1200&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1617788138017-80ad40651399?q=80&w=1200&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1633694735977-2c67af6bd5a4?q=80&w=1200&auto=format&fit=crop',
+  ];
+  
+  final StationService _stationService = StationService();
+  Position? _currentPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    _determinePosition();
+  }
+
+  Future<void> _determinePosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return;
+      }
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return;
+        }
+      }
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final String uid = FirebaseAuth.instance.currentUser?.uid ?? "";
 
     return Scaffold(
-      backgroundColor: kBackground,
-      extendBody: true,
+      backgroundColor: Colors.white,
       body: StreamBuilder<DocumentSnapshot>(
-        // Real-time user data listen kar rahe hain
         stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
-        builder: (context, snapshot) {
+        builder: (context, userSnapshot) {
           String userName = "User";
-          double walletBalance = 0.0;
-
-          if (snapshot.hasData && snapshot.data!.exists) {
-            var data = snapshot.data!.data() as Map<String, dynamic>;
+          if (userSnapshot.hasData && userSnapshot.data!.exists) {
+            var data = userSnapshot.data!.data() as Map<String, dynamic>;
             userName = data['name'] ?? "User";
-            walletBalance = (data['walletBalance'] ?? 0.0).toDouble();
           }
 
-          return Stack(
-            children: [
-              _buildAmbientGlows(),
-              CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  _buildAppBar(userName),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        children: [
-                          _buildVehicleHero(),
-                          const SizedBox(height: 30),
-                          _buildMainStatsCard(walletBalance),
-                          const SizedBox(height: 40),
-                          
-                          _buildSectionHeader('EV Services'),
-                          _buildServiceGrid(context), // Context pass kiya redirection ke liye
-                          
-                          const SizedBox(height: 160), 
-                        ],
+          return CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              _buildModernHeader(userName),
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 24),
+                    _buildSectionHeader("Recommend for you", ""),
+                    const SizedBox(height: 16),
+                    _buildRecommendedList(),
+                    const SizedBox(height: 32),
+                    _buildSectionHeader("Nearby Charging Station", "View all"),
+                    const SizedBox(height: 16),
+                    _buildNearbyList(),
+                    const SizedBox(height: 100),
+                  ],
+                ),
+              ),
+            ],
+          ).animate().fadeIn(duration: 400.ms);
+        },
+      ),
+    );
+  }
+
+  Widget _buildModernHeader(String name) {
+    final safeName = name.trim().isEmpty ? 'User' : name.trim();
+
+    return SliverToBoxAdapter(
+      child: Container(
+        padding: const EdgeInsets.only(top: 60, left: 24, right: 24, bottom: 30),
+        decoration: BoxDecoration(
+          color: kPrimaryGreen.withOpacity(0.05),
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(32),
+            bottomRight: Radius.circular(32),
+          ),
+        ),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: kPrimaryGreen, width: 2),
+                      ),
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundColor: Colors.white,
+                        child: Text(_initialForName(safeName), style: const TextStyle(fontWeight: FontWeight.bold, color: kPrimaryGreen, fontSize: 18)),
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(safeName, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: kTextDark)),
+                        Text("Find nearest charging point", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                      ],
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
                   ),
-                ],
-              ),
-              _buildFloatingStatusDock(),
-            ],
+                  child: Stack(
+                    children: [
+                      const Icon(Icons.notifications_none_rounded, color: kTextDark, size: 24),
+                      Positioned(right: 2, top: 2, child: Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 50,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.search, color: Colors.grey),
+                        const SizedBox(width: 12),
+                        Text("Search", style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  height: 50,
+                  width: 50,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+                  ),
+                  child: const Icon(Icons.tune_rounded, color: kPrimaryGreen),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, String action) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: kTextDark)),
+          if (action.isNotEmpty)
+            Text(action, style: TextStyle(color: Colors.grey.shade500, fontSize: 12, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecommendedList() {
+    double searchLat = _currentPosition?.latitude ?? _fallbackLat;
+    double searchLng = _currentPosition?.longitude ?? _fallbackLng;
+
+    return SizedBox(
+      height: 200,
+      child: StreamBuilder<List<StationModel>>(
+        stream: _stationService.getAllStations(searchLat, searchLng),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: kPrimaryGreen));
+          
+          final stations = snapshot.data!;
+          if (stations.isEmpty) return const SizedBox();
+
+          return ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: stations.length,
+            itemBuilder: (context, index) {
+              final station = stations[index];
+              return Container(
+                width: 280,
+                margin: const EdgeInsets.only(right: 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 10))],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _StationImage(imageUrl: _stationImageFor(station.id), borderRadius: 24),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8)),
+                              child: Text(
+                                _currentPosition == null ? 'Nearby fallback' : 'Open',
+                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(station.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                const SizedBox(height: 2),
+                                Text("Connection: ${station.availableSlots} point", style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
     );
   }
 
-  // --- NAVIGATION LOGIC ---
-  Widget _buildServiceGrid(BuildContext context) {
-    return Row(
-      children: [
-        _serviceCard(
-          "Find Station", 
-          Icons.map_rounded, 
-          const Color(0xFF28C76F),
-          () {
-            HapticFeedback.mediumImpact();
-            // --- REDIRECT TO MAP PAGE ---
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const MapScreen())
-            );
-          }
-        ),
-        const SizedBox(width: 16),
-        _serviceCard(
-          "Book Slot", 
-          Icons.calendar_today_rounded, 
-          Colors.orange,
-          () {
-            HapticFeedback.lightImpact();
-            // Future: Yahan BookingScreen ka logic dal sakte ho
-          }
-        ),
-      ],
-    );
-  }
+  Widget _buildNearbyList() {
+    double searchLat = _currentPosition?.latitude ?? _fallbackLat;
+    double searchLng = _currentPosition?.longitude ?? _fallbackLng;
 
-  Widget _serviceCard(String title, IconData icon, Color color, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 30),
-          decoration: BoxDecoration(
-            color: kCardWhite,
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
-          ),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 30),
-              ),
-              const SizedBox(height: 15),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: kTextDark)),
-            ],
-          ),
-        ),
-      ),
-    ).animate().fadeIn().slideY(begin: 0.1);
-  }
+    return StreamBuilder<List<StationModel>>(
+      stream: _stationService.getAllStations(searchLat, searchLng),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator(color: kPrimaryGreen)));
+        
+        final stations = snapshot.data!;
+        
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          itemCount: stations.length,
+          itemBuilder: (context, index) {
+            final station = stations[index];
+            
+            double distance = 0;
+            if (_currentPosition != null) {
+              distance = Geolocator.distanceBetween(
+                _currentPosition!.latitude, _currentPosition!.longitude, 
+                station.lat, station.lng
+              ) / 1000;
+            } else {
+              distance = Random().nextDouble() * 5 + 1; // dummy if location off
+            }
 
-  // --- UI COMPONENTS (STATIC/VISUAL) ---
-
-  Widget _buildAmbientGlows() {
-    return Positioned(
-      top: -150,
-      right: -100,
-      child: CircleAvatar(
-        radius: 200,
-        backgroundColor: kPrimaryGreen.withOpacity(0.08),
-      ).animate().fadeIn(duration: 2.seconds),
-    );
-  }
-
-  Widget _buildAppBar(String name) {
-    return SliverAppBar(
-      backgroundColor: kBackground.withOpacity(0.5),
-      elevation: 0,
-      pinned: true,
-      centerTitle: false,
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Hello, ${name.split(' ')[0]} 👋', 
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: kTextDark.withOpacity(0.5))),
-          const Text('MY EV STATUS',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: kTextDark)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVehicleHero() {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        ...List.generate(2, (index) => Container(
-          width: 240 + (index * 40.0),
-          height: 240 + (index * 40.0),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: kPrimaryGreen.withOpacity(0.1 - (index * 0.05)), width: 2),
-          ),
-        ).animate(onPlay: (c) => c.repeat(reverse: true)).scale(
-          begin: const Offset(1, 1),
-          end: Offset(1.1 + (index * 0.1), 1.1 + (index * 0.1)),
-          duration: (2 + index).seconds,
-          curve: Curves.easeInOut,
-        )),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("75%", 
-              style: TextStyle(fontSize: 82, fontWeight: FontWeight.w900, color: kTextDark, letterSpacing: -4, height: 1.0)),
-            const SizedBox(height: 4),
-            Text("CHARGED", 
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 4, color: kPrimaryGreen.withOpacity(0.8))),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMainStatsCard(double balance) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: kCardWhite,
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 40, offset: const Offset(0, 20))],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildStatItem('75%', 'Battery', Icons.bolt_rounded, kPrimaryGreen),
-          _buildVerticalDivider(),
-          _buildStatItem('₹${balance.toStringAsFixed(0)}', 'Wallet', Icons.account_balance_wallet_rounded, Colors.blueAccent),
-          _buildVerticalDivider(),
-          _buildStatItem('21°C', 'Ambient', Icons.thermostat_rounded, Colors.orangeAccent),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFloatingStatusDock() {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              height: 90,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: kTextDark.withOpacity(0.9),
-                borderRadius: BorderRadius.circular(32),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.grey.shade100, width: 2),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 15, offset: const Offset(0, 5))],
               ),
-              child: const Row(
+              child: Column(
                 children: [
-                  Icon(Icons.electric_bolt_rounded, color: kPrimaryGreen, size: 30),
-                  SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Supercharging Now', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                        Text('Remaining: 24 mins', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                      ],
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: _StationImage(
+                          imageUrl: _stationImageFor(station.id),
+                          width: 80,
+                          height: 80,
+                          borderRadius: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(station.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: kTextDark)),
+                            const SizedBox(height: 4),
+                            Text("Connection: ${station.availableSlots} point", style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            const Text("Central City District", style: TextStyle(color: Colors.grey, fontSize: 11)), // mock address
+                            const SizedBox(height: 8),
+                            const Text("Open", style: TextStyle(color: kPrimaryGreen, fontWeight: FontWeight.bold, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  Text('75%', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 16),
+                  const Divider(height: 1, color: Color(0xFFF0F0F0)),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.schedule, size: 14, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          const Text("24 * 7", style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 12),
+                          const Icon(Icons.location_on_outlined, size: 14, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Text("${distance.toStringAsFixed(1)} km", style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 12),
+                          const Icon(Icons.star, size: 14, color: Colors.orange),
+                          const SizedBox(width: 4),
+                          const Text("5.0", style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          // Route explicitly to map screen focusing on this station
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => const MapScreen()));
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kPrimaryGreen,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: const Text("Get direction", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
                 ],
               ),
-            ),
-          ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _stationImageFor(String seed) {
+    final safeSeed = seed.isEmpty ? 'station' : seed;
+    final index = safeSeed.codeUnits.fold<int>(0, (sum, unit) => sum + unit) % _stationImageUrls.length;
+    return _stationImageUrls[index];
+  }
+
+  String _initialForName(String name) {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      return 'U';
+    }
+    return trimmedName.substring(0, 1).toUpperCase();
+  }
+}
+
+class _StationImage extends StatelessWidget {
+  const _StationImage({
+    required this.imageUrl,
+    this.width,
+    this.height,
+    required this.borderRadius,
+  });
+
+  final String imageUrl;
+  final double? width;
+  final double? height;
+  final double borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.network(
+      imageUrl,
+      width: width,
+      height: height,
+      fit: BoxFit.cover,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) {
+          return child;
+        }
+        return _fallbackCardImage();
+      },
+      errorBuilder: (context, error, stackTrace) => _fallbackCardImage(),
+    );
+  }
+
+  Widget _fallbackCardImage() {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(borderRadius),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF153B2E), Color(0xFF28C76F)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
       ),
-    ).animate().slideY(begin: 1, end: 0, curve: Curves.easeOutBack);
-  }
-
-  Widget _buildStatItem(String value, String label, IconData icon, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 24),
-        const SizedBox(height: 10),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: kTextDark)),
-        Text(label, style: TextStyle(color: kTextDark.withOpacity(0.4), fontSize: 11)),
-      ],
+      child: const Center(
+        child: Icon(Icons.ev_station_rounded, color: Colors.white, size: 34),
+      ),
     );
   }
-
-  Widget _buildSectionHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Text(title.toUpperCase(), 
-        style: const TextStyle(color: kTextDark, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1.2)),
-    );
-  }
-
-  Widget _buildVerticalDivider() => Container(height: 30, width: 1, color: Colors.black.withOpacity(0.05));
 }

@@ -51,10 +51,11 @@ class BookingService {
     return _firestore
         .collection('bookings')
         .where('userId', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) => BookingModel.fromMap(doc.data(), doc.id)).toList();
+      final list = snapshot.docs.map((doc) => BookingModel.fromMap(doc.data(), doc.id)).toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
     });
   }
 

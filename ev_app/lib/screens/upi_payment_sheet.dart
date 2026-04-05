@@ -8,7 +8,7 @@ import '../services/upi_service.dart';
 
 class UpiPaymentSheet extends StatefulWidget {
   final double amount;
-  final String bookingId;
+  final String? bookingId;
   final String userId;
   final String? receiverUpiId;
   final String? receiverName;
@@ -16,8 +16,8 @@ class UpiPaymentSheet extends StatefulWidget {
   const UpiPaymentSheet({
     super.key,
     required this.amount,
-    required this.bookingId,
     required this.userId,
+    this.bookingId,
     this.receiverUpiId,
     this.receiverName,
   });
@@ -84,6 +84,9 @@ class _UpiPaymentSheetState
         bookingId: widget.bookingId,
         receiverUpiId: widget.receiverUpiId,
         receiverName: widget.receiverName,
+        transactionNote: widget.bookingId == null
+            ? "EV Wallet Recharge"
+            : "EV Charging Slot Booking",
       );
 
 
@@ -92,6 +95,7 @@ class _UpiPaymentSheetState
         bookingId: widget.bookingId,
         userId: widget.userId,
         amount: widget.amount,
+        isWalletTopUp: widget.bookingId == null,
       );
 
 

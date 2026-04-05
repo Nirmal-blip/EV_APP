@@ -13,16 +13,32 @@ const AdminDashboard = () => {
     const fetchAdminData = async () => {
       try {
         const usersSnap = await getDocs(collection(db, 'users'));
-        const usersList = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
+        const usersList = usersSnap.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(u => u.role !== 'admin');
         const bookingsSnap = await getDocs(collection(db, 'bookings'));
         let totalRevenue = 0;
         let totalEnergy = 0; 
+        const bookingsList = [];
         bookingsSnap.forEach(doc => {
-          totalRevenue += (doc.data().amount || 0);
-          totalEnergy += (doc.data().energykWh || 5.5);
+          const data = doc.data();
+          totalRevenue += (data.amount || 0);
+          totalEnergy += (data.energykWh || 5.5);
+          bookingsList.push({ id: doc.id, ...data });
         });
 
+        // Bind latest bookings to users
+        const usersWithBookings = usersList.map(user => {
+            const userBookings = bookingsList.filter(b => b.userId === user.id);
+            // Sort by descending time if exists
+            userBookings.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
+            
+            return {
+                ...user,
+                totalBookings: userBookings.length,
+                latestBooking: userBookings[0] || null,
+            };
+        });
         const stationsSnap = await getDocs(collection(db, 'stations'));
 
         setStats({
@@ -31,8 +47,7 @@ const AdminDashboard = () => {
           users: usersSnap.size,
           activeStations: stationsSnap.size,
         });
-
-        setUsers(usersList);
+        setUsers(usersWithBookings);
       } catch (err) {
         console.error("Admin data fetch failed: ", err);
       } finally {
@@ -129,10 +144,10 @@ const AdminDashboard = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b-2 border-slate-100">
-                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest">Name</th>
-                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest">Email</th>
-                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest">Role</th>
-                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest text-right">Wallet Balance</th>
+                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest">User Details</th>
+                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest text-center">Total Bookings</th>
+                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest">Latest Station</th>
+                  <th className="py-4 px-4 font-bold text-slate-400 text-xs uppercase tracking-widest text-right">Payment Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -142,18 +157,36 @@ const AdminDashboard = () => {
                   <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/80 transition-colors group">
                     <td className="py-5 px-4 font-bold text-slate-900 flex items-center gap-3">
                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs border border-slate-200 font-bold group-hover:bg-white transition-colors">
-                          {(u.name || u.email[0]).charAt(0).toUpperCase()}
+                          {(u.name || (u.email && u.email[0]) || 'A').charAt(0).toUpperCase()}
                        </div>
-                       {u.name || 'Anonymous User'}
+                       <div>
+                         <div>{u.name || 'Anonymous User'}</div>
+                         <div className="text-xs text-slate-400 font-medium">{u.email}</div>
+                       </div>
                     </td>
-                    <td className="py-5 px-4 text-slate-500 font-medium">{u.email}</td>
-                    <td className="py-5 px-4">
-                      <span className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
-                        {u.role || 'User'}
-                      </span>
+                    <td className="py-5 px-4 text-slate-500 font-medium text-center">
+                       <span className="bg-slate-100 px-3 py-1 rounded-lg text-slate-700 font-bold">{u.totalBookings || 0}</span>
                     </td>
-                    <td className="py-5 px-4 text-right font-black text-green-600 text-lg">
-                       ₹{(u.walletBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    <td className="py-5 px-4 text-slate-500 font-medium">
+                       {u.latestBooking ? (
+                         <div className="flex items-center gap-2">
+                            <span className="truncate max-w-[150px] font-bold text-slate-700 block">{u.latestBooking.stationId || u.latestBooking.stationName || 'N/A'}</span>
+                         </div>
+                       ) : (
+                         <span className="text-slate-300 italic text-sm">No bookings yet</span>
+                       )}
+                    </td>
+                    <td className="py-5 px-4 text-right">
+                       {u.latestBooking ? (
+                         <div className="flex flex-col items-end">
+                            <span className="font-black text-slate-900 text-sm">₹{u.latestBooking.amount || 0}</span>
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider mt-1 ${u.latestBooking.paymentStatus === 'completed' || u.latestBooking.paymentStatus === 'success' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                              {u.latestBooking.paymentStatus || 'Pending'}
+                            </span>
+                         </div>
+                       ) : (
+                         <span className="text-slate-300">-</span>
+                       )}
                     </td>
                   </tr>
                 ))}

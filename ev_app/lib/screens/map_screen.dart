@@ -5,6 +5,9 @@ import 'package:geolocator/geolocator.dart';
 import '../services/station_service.dart';
 import '../models/station_model.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/booking_model.dart';
+import '../services/booking_service.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -99,7 +102,10 @@ class _MapScreenState extends State<MapScreen> {
 
   Widget _buildMapWithStreams() {
     return StreamBuilder<List<StationModel>>(
-      stream: _stationService.getAllStations(), //
+      stream: _stationService.getAllStations(
+        _currentPosition?.latitude ?? 21.1702, 
+        _currentPosition?.longitude ?? 72.8311
+      ), //
       builder: (context, snapshot) {
         List<Marker> markers = [];
 
@@ -149,7 +155,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           children: [
             TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
               userAgentPackageName: 'com.nirmal.ev_app',
             ),
             MarkerLayer(markers: markers),
@@ -166,7 +172,10 @@ class _MapScreenState extends State<MapScreen> {
         height: 210,
         margin: const EdgeInsets.only(bottom: 25),
         child: StreamBuilder<List<StationModel>>(
-          stream: _stationService.getAllStations(), // Real-time fetch
+          stream: _stationService.getAllStations(
+            _currentPosition?.latitude ?? 21.1702, 
+            _currentPosition?.longitude ?? 72.8311
+          ), // Real-time fetch
           builder: (context, snapshot) {
             if (!snapshot.hasData || snapshot.data!.isEmpty) {
               return const SizedBox(); 
@@ -213,9 +222,9 @@ class _MapScreenState extends State<MapScreen> {
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: isSelected ? Border.all(color: const Color(0xFF28C76F), width: 2) : null,
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5))],
+          borderRadius: BorderRadius.circular(28),
+          border: isSelected ? Border.all(color: const Color(0xFF28C76F), width: 2) : Border.all(color: Colors.grey.shade100, width: 1.5),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 8))],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -223,24 +232,64 @@ class _MapScreenState extends State<MapScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: Text(station.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))),
-                Text("${distance.toStringAsFixed(1)} km away", style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                Expanded(child: Text(station.name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Color(0xFF0F172A)))),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8)),
+                  child: Text("${distance.toStringAsFixed(1)} km", style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
               ],
             ),
             const SizedBox(height: 8),
-            Text(station.chargerType, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+            Text(station.chargerType, style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w600)),
             const Spacer(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text("₹${station.pricePerHour}/h", style: const TextStyle(color: Color(0xFF28C76F), fontWeight: FontWeight.w900, fontSize: 16)),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Standard Rate", style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+                    Text("₹${station.pricePerHour}/h", style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w900, fontSize: 20)),
+                  ],
+                ),
                 ElevatedButton(
-                  onPressed: () {},
+                  onPressed: () async {
+                    String uid = FirebaseAuth.instance.currentUser?.uid ?? "";
+                    if (uid.isEmpty) {
+                      _showErrorSnackBar("Please log in to book.");
+                      return;
+                    }
+                    setState(() => _isLoading = true);
+                    try {
+                      BookingModel newBooking = BookingModel(
+                        id: "",
+                        userId: uid,
+                        stationId: station.name,
+                        slotTime: DateTime.now().add(const Duration(hours: 1)),
+                        amount: station.pricePerHour,
+                        paymentStatus: "completed",
+                        bookingStatus: "confirmed",
+                        createdAt: DateTime.now(),
+                      );
+                      await BookingService().createBooking(newBooking);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Booking Confirmed Successfully!"), backgroundColor: Color(0xFF28C76F)));
+                      }
+                    } catch (e) {
+                      _showErrorSnackBar("Booking Failed: $e");
+                    } finally {
+                      if (mounted) setState(() => _isLoading = false);
+                    }
+                  },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF28C76F),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    backgroundColor: isSelected ? const Color(0xFF28C76F) : const Color(0xFF0F172A),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: const Text("Book Now", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  child: const Text("Book Slot", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                 ),
               ],
             ),

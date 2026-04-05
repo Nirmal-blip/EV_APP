@@ -1,53 +1,95 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/station_model.dart';
-import 'package:latlong2/latlong.dart';
 import 'dart:math';
 
 class StationService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Get a stream of all stations
-  Stream<List<StationModel>> getAllStations() {
-    return _firestore.collection('stations').snapshots().map((snapshot) {
-      return snapshot.docs.map((doc) {
-        return StationModel.fromMap(doc.data(), doc.id);
-      }).toList();
-    });
-  }
+  // Fetch from OpenChargeMap REST API
+  Future<List<StationModel>> fetchLiveStations(double lat, double lng) async {
+    final apiKey = dotenv.env['OCM_API_KEY'] ?? '';
+    final url = Uri.parse('https://api.openchargemap.io/v3/poi/?output=json&latitude=$lat&longitude=$lng&distance=5000&maxresults=200');
 
-  // Get nearby stations based on radius (Haversine formula for simple distance check)
-  // Note: For large scale production apps, use GeoFlutterFire or similar.
-  Future<List<StationModel>> getNearbyStations(double lat, double lng, {double radiusInKm = 5.0}) async {
-    QuerySnapshot snapshot = await _firestore.collection('stations').get();
-    
-    List<StationModel> nearbyStations = [];
-    
-    for (var doc in snapshot.docs) {
-      StationModel station = StationModel.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-      double distance = _calculateDistance(lat, lng, station.lat, station.lng);
-      
-      if (distance <= radiusInKm) {
-        nearbyStations.add(station);
+    try {
+      // Fetch active Firebase bookings to cross-reference with OpenChargeMap
+      Map<String, int> occupiedSlots = {};
+      try {
+         final bookingsSnap = await FirebaseFirestore.instance
+             .collection('bookings')
+             .where('bookingStatus', isEqualTo: 'active')
+             .get();
+             
+         for (var doc in bookingsSnap.docs) {
+             final data = doc.data();
+             final stationId = data['stationId']?.toString();
+             if (stationId != null) {
+                occupiedSlots[stationId] = (occupiedSlots[stationId] ?? 0) + 1;
+             }
+         }
+      } catch (e) {
+         print("Booking slots sync error: $e");
       }
+
+      final response = await http.get(url, headers: {'X-API-Key': apiKey});
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((poi) {
+          String type = 'Standard Charger';
+           double price = 0;
+           
+           if (poi['Connections'] != null && poi['Connections'].isNotEmpty) {
+              final connections = poi['Connections'] as List;
+              double maxPower = 0.0;
+              for (var c in connections) {
+                if (c['PowerKW'] != null) {
+                  double power = c['PowerKW'] is double ? c['PowerKW'] : (c['PowerKW'] as num).toDouble();
+                  if (power > maxPower) maxPower = power;
+                }
+              }
+              if (maxPower >= 40) {
+                type = 'DC Fast Charge';
+              } else if (maxPower >= 11) {
+                type = 'Type 2 AC';
+              }
+           }
+
+           if (poi['UsageCost'] != null && !poi['UsageCost'].toString().toLowerCase().contains('free')) {
+              price = 120.0;
+           }
+
+           final stationIdStr = poi['ID'].toString();
+           
+           return StationModel(
+             id: stationIdStr,
+             name: poi['AddressInfo']?['Title'] ?? poi['OperatorInfo']?['Title'] ?? 'Global EV Station',
+             lat: (poi['AddressInfo']?['Latitude'] ?? 0.0).toDouble(),
+             lng: (poi['AddressInfo']?['Longitude'] ?? 0.0).toDouble(),
+             availableSlots: max(0, (poi['NumberOfPoints'] ?? Random().nextInt(4) + 1).toInt() - (occupiedSlots[stationIdStr] ?? 0)),
+             pricePerHour: price,
+             chargerType: type,
+           );
+        }).toList();
+      }
+    } catch (e) {
+      print("Error fetching live stations: $e");
     }
-    
-    return nearbyStations;
+    return [];
   }
 
-  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    const double p = 0.017453292519943295; // Math.pi / 180
-    double a = 0.5 - cos((lat2 - lat1) * p) / 2 + 
-               cos(lat1 * p) * cos(lat2 * p) * 
-               (1 - cos((lon2 - lon1) * p)) / 2;
-    return 12742 * asin(sqrt(a)); // 2 * R; R = 6371 km
+  // Get a stream of all stations around a given coordinate
+  Stream<List<StationModel>> getAllStations([double lat = 21.1702, double lng = 72.8311]) async* {
+    yield await fetchLiveStations(lat, lng);
   }
 
-  // Get specific station details
+  // Backwards compatibility for other potential usages
+  Future<List<StationModel>> getNearbyStations(double lat, double lng, {double radiusInKm = 30.0}) async {
+    return fetchLiveStations(lat, lng);
+  }
+
   Future<StationModel?> getStationById(String stationId) async {
-    DocumentSnapshot doc = await _firestore.collection('stations').doc(stationId).get();
-    if (doc.exists) {
-      return StationModel.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-    }
+    // OpenChargeMap supports querying by ID if required in future
     return null;
   }
 }

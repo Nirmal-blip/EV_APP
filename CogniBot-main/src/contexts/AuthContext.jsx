@@ -4,7 +4,9 @@ import {
     signInWithEmailAndPassword, 
     signOut, 
     onAuthStateChanged,
-    updateProfile 
+    updateProfile,
+    GoogleAuthProvider,
+    signInWithPopup
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -41,6 +43,27 @@ export function AuthProvider({ children }) {
         return signInWithEmailAndPassword(auth, email, password);
     }
 
+    async function signInWithGoogle() {
+        const provider = new GoogleAuthProvider();
+        const userCredential = await signInWithPopup(auth, provider);
+        
+        // Check if user exists in database, if not create profile
+        const docRef = doc(db, 'users', userCredential.user.uid);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) {
+            await setDoc(docRef, {
+                name: userCredential.user.displayName || '',
+                email: userCredential.user.email,
+                walletBalance: 0.0,
+                createdAt: serverTimestamp(),
+                role: 'user'
+            });
+        }
+        
+        return userCredential;
+    }
+
     function logout() {
         return signOut(auth);
     }
@@ -73,6 +96,7 @@ export function AuthProvider({ children }) {
         currentUser,
         login,
         signup,
+        signInWithGoogle,
         logout
     };
 

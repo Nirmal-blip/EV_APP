@@ -1,20 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import { GoogleMap, MarkerF, InfoWindowF, useJsApiLoader, CircleF } from '@react-google-maps/api';
 import { collection, getDocs, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MapPin, Zap, BatteryCharging, Clock, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-
-// Fix leaflet default markers
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
 
 const EVChargingFinder = () => {
   const [stations, setStations] = useState([]);
@@ -23,6 +13,12 @@ const EVChargingFinder = () => {
   const { currentUser } = useAuth();
 
   const [mapCenter, setMapCenter] = useState(null);
+  const [selectedStation, setSelectedStation] = useState(null);
+
+  const { isLoaded } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY
+  });
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -45,7 +41,7 @@ const EVChargingFinder = () => {
 
     const fetchLiveStations = async () => {
       try {
-        const url = `https://api.openchargemap.io/v3/poi/?output=json&latitude=${mapCenter[0]}&longitude=${mapCenter[1]}&distance=30&maxresults=25`;
+        const url = `https://api.openchargemap.io/v3/poi/?output=json&latitude=${mapCenter[0]}&longitude=${mapCenter[1]}&distance=5000&maxresults=200`;
         
         const res = await fetch(url, {
           headers: {
@@ -59,6 +55,20 @@ const EVChargingFinder = () => {
         }
 
         const data = await res.json();
+
+        // Cross-reference Firebase active bookings
+        let occupiedSlots = {};
+        try {
+           const bookingsSnap = await getDocs(collection(db, 'bookings'));
+           bookingsSnap.docs.forEach(d => {
+              const b = d.data();
+              if (b.bookingStatus === 'active' && b.stationId) {
+                 occupiedSlots[b.stationId] = (occupiedSlots[b.stationId] || 0) + 1;
+              }
+           });
+        } catch(e) {
+           console.error("Booking sync error", e);
+        }
         
         const dataList = data.map(poi => {
            let type = 'Standard Charger';
@@ -81,7 +91,7 @@ const EVChargingFinder = () => {
              name: poi.AddressInfo?.Title || poi.OperatorInfo?.Title || 'Global EV Station',
              pricePerHour: price,
              chargerType: type,
-             availableSlots: poi.NumberOfPoints || Math.floor(Math.random() * 4) + 1
+             availableSlots: Math.max(0, (poi.NumberOfPoints || Math.floor(Math.random() * 4) + 1) - (occupiedSlots[poi.ID.toString()] || 0))
            };
         });
         
@@ -98,6 +108,11 @@ const EVChargingFinder = () => {
   const handleBookSlot = async (station) => {
     if (!currentUser) {
       toast.error('Please log in to book a slot');
+      return;
+    }
+    
+    if (currentUser.profile?.role === 'admin') {
+      toast.error('Administrators are not permitted to book stations.');
       return;
     }
     
@@ -134,7 +149,16 @@ const EVChargingFinder = () => {
         energykWh: 5.5
       });
 
+      // Synchronously decrease the slot count locally 
+      setStations(prev => prev.map(s => {
+         if (s.id === station.id) {
+            return { ...s, availableSlots: Math.max(0, (s.availableSlots || 0) - 1) };
+         }
+         return s;
+      }));
+
       toast.success(`Slot booked at ${station.name}!`);
+      setSelectedStation(null); // Close the infowindow
     } catch (err) {
       console.error(err);
       toast.error('Booking failed. Please try again.');
@@ -143,7 +167,7 @@ const EVChargingFinder = () => {
     }
   };
 
-  if (loading || !mapCenter) {
+  if (!isLoaded || loading || !mapCenter) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50">
         <Loader2 size={48} className="animate-spin text-green-500 mb-4" />
@@ -167,7 +191,11 @@ const EVChargingFinder = () => {
             {stations.length === 0 ? (
               <div className="text-center p-4 text-slate-500 font-medium">No stations found in the database.</div>
             ) : stations.map(station => (
-               <div key={station.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-green-300 hover:shadow-md transition-all cursor-pointer">
+               <div 
+                 key={station.id} 
+                 onClick={() => setSelectedStation(station)}
+                 className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-green-300 hover:shadow-md transition-all cursor-pointer"
+               >
                   <h3 className="font-bold text-slate-900 mb-1">{station.name || 'EV Station'}</h3>
                   <div className="flex flex-col gap-2 mt-2 border-t border-slate-100 pt-2">
                     <div className="flex items-center justify-between text-sm">
@@ -186,58 +214,68 @@ const EVChargingFinder = () => {
 
         {/* Map Viewport */}
         <div className="flex-1 relative">
-          <MapContainer center={mapCenter} zoom={13} className="w-full h-full z-0 font-sans">
-            <TileLayer
-              attribution='&copy; OpenStreetMap'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+          <GoogleMap
+            mapContainerClassName="w-full h-full z-0 font-sans"
+            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
+            zoom={13}
+            options={{
+              disableDefaultUI: true,
+              zoomControl: true,
+            }}
+          >
             {/* User Live Location Marker */}
-            <CircleMarker center={mapCenter} pathOptions={{ color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.5 }} radius={10}>
-              <Popup>Your Location</Popup>
-            </CircleMarker>
+            <CircleF 
+              center={{ lat: mapCenter[0], lng: mapCenter[1] }} 
+              options={{ fillColor: '#3b82f6', fillOpacity: 0.5, strokeColor: '#2563eb', strokeWeight: 2 }} 
+              radius={400} 
+            />
         
-        {stations.map(station => {
-          if (!station.lat || !station.lng) return null;
-          return (
-            <Marker key={station.id} position={[station.lat, station.lng]}>
-              <Popup className="rounded-xl overflow-hidden shadow-2xl p-0 custom-popup">
+            {stations.map(station => {
+              if (!station.lat || !station.lng) return null;
+              return (
+                <MarkerF 
+                  key={station.id} 
+                  position={{ lat: station.lat, lng: station.lng }}
+                  onClick={() => setSelectedStation(station)}
+                />
+              );
+            })}
+
+            {selectedStation && (
+              <InfoWindowF
+                position={{ lat: selectedStation.lat, lng: selectedStation.lng }}
+                onCloseClick={() => setSelectedStation(null)}
+              >
                 <div className="p-4 w-60">
                   <div className="w-12 h-12 bg-green-100 text-green-600 rounded-xl flex items-center justify-center mb-3">
                     <Zap size={24} />
                   </div>
-                  <h3 className="font-bold text-lg text-slate-900 mb-1">{station.name || 'Unnamed Station'}</h3>
+                  <h3 className="font-bold text-lg text-slate-900 mb-1">{selectedStation.name || 'Unnamed Station'}</h3>
                   <div className="flex items-center gap-1.5 text-sm font-medium text-slate-500 mb-2 border-b border-slate-100 pb-2">
-                     <BatteryCharging size={16} className="text-green-500" /> {station.chargerType || 'Standard'}
+                     <BatteryCharging size={16} className="text-green-500" /> {selectedStation.chargerType || 'Standard'}
                   </div>
                   
                   <div className="flex justify-between items-center text-sm mb-4">
-                    <span className="font-bold text-slate-900">₹{station.pricePerHour || 0}/hr</span>
+                    <span className="font-bold text-slate-900">₹{selectedStation.pricePerHour || 0}/hr</span>
                     <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded">
-                      {station.availableSlots || 0} Slots
+                      {selectedStation.availableSlots || 0} Slots
                     </span>
                   </div>
 
                   <button 
-                    onClick={() => handleBookSlot(station)}
-                    disabled={bookingLoading || (station.availableSlots || 0) === 0}
+                    onClick={() => handleBookSlot(selectedStation)}
+                    disabled={bookingLoading || (selectedStation.availableSlots || 0) === 0}
                     className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2 disabled:bg-slate-300"
                   >
                     {bookingLoading ? <Loader2 size={16} className="animate-spin" /> : 
-                     (station.availableSlots || 0) === 0 ? 'Full' : 'Book Slot'}
+                     (selectedStation.availableSlots || 0) === 0 ? 'Full' : 'Book Slot'}
                   </button>
                 </div>
-              </Popup>
-            </Marker>
-          );
-        })}
-          </MapContainer>
+              </InfoWindowF>
+            )}
+          </GoogleMap>
         </div>
       </div>
-      <style>{`
-        .leaflet-popup-content-wrapper { padding: 0; border-radius: 1rem; overflow: hidden; }
-        .leaflet-popup-content { margin: 0; }
-        .leaflet-container { z-index: 10; }
-      `}</style>
     </div>
   );
 };

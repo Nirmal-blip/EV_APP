@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, User, Zap, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import { FcGoogle } from 'react-icons/fc';
 
 const Register = () => {
   const [name, setName] = useState('');
@@ -12,7 +13,7 @@ const Register = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { signup } = useAuth();
+  const { signup, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -38,6 +39,34 @@ const Register = () => {
     } catch (err) {
       setError(err.message || 'Failed to create an account.');
       toast.error('Registration Error', {
+        style: {
+          borderRadius: '16px',
+          background: '#fee2e2',
+          color: '#991b1b',
+        },
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setError('');
+      setIsLoading(true);
+      await signInWithGoogle();
+      toast.success('Account accessed successfully!', {
+        icon: '🎉',
+        style: {
+          borderRadius: '16px',
+          background: '#0f172a',
+          color: '#fff',
+        },
+      });
+      navigate('/');
+    } catch (err) {
+      setError('Failed to sign in with Google. Please try again.');
+      toast.error('Authentication Error', {
         style: {
           borderRadius: '16px',
           background: '#fee2e2',
@@ -181,6 +210,24 @@ const Register = () => {
               )}
             </motion.button>
           </form>
+
+          <div className="mt-6 flex items-center justify-center gap-4">
+            <div className="h-[1px] flex-1 bg-slate-200"></div>
+            <span className="text-sm font-medium text-slate-400">or continue with</span>
+            <div className="h-[1px] flex-1 bg-slate-200"></div>
+          </div>
+
+          <motion.button
+            type="button"
+            onClick={handleGoogleSignIn}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            disabled={isLoading}
+            className="w-full py-3.5 mt-6 bg-white text-slate-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 border-2 border-slate-200 shadow-sm hover:border-slate-300 hover:bg-slate-50 transition-all disabled:opacity-70 disabled:cursor-not-allowed group"
+          >
+            <FcGoogle size={24} className="group-hover:scale-110 transition-transform" />
+            <span className="tracking-wide">Sign Up with Google</span>
+          </motion.button>
 
           <div className="mt-8 text-center border-t border-slate-200 pt-6">
             <p className="text-slate-500 font-medium tracking-wide">

@@ -8,6 +8,17 @@ import '../../models/booking_model.dart'; //
 class YourBookingsScreen extends StatelessWidget {
   const YourBookingsScreen({super.key});
 
+  String _shortLabel(String value, {int maxLength = 8}) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return 'N/A';
+    }
+    if (trimmed.length <= maxLength) {
+      return trimmed;
+    }
+    return trimmed.substring(0, maxLength);
+  }
+
   @override
   Widget build(BuildContext context) {
     final String uid = FirebaseAuth.instance.currentUser?.uid ?? "";
@@ -24,7 +35,6 @@ class YourBookingsScreen extends StatelessWidget {
             stream: FirebaseFirestore.instance
                 .collection('bookings')
                 .where('userId', isEqualTo: uid) // Sirf current user ki bookings
-                .orderBy('createdAt', descending: true)
                 .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -47,7 +57,17 @@ class YourBookingsScreen extends StatelessWidget {
                 );
               }
 
-              final bookings = snapshot.data!.docs;
+              final bookings = snapshot.data!.docs.toList();
+              
+              // Sort the bookings locally to avoid Firestore Composite Index crash
+              bookings.sort((a, b) {
+                final timeA = (a.data() as Map<String, dynamic>)['createdAt'];
+                final timeB = (b.data() as Map<String, dynamic>)['createdAt'];
+                if (timeA is Timestamp && timeB is Timestamp) {
+                  return timeB.compareTo(timeA);
+                }
+                return 0;
+              });
 
               return SliverPadding(
                 padding: const EdgeInsets.all(20),
@@ -127,7 +147,7 @@ class YourBookingsScreen extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                _buildRow("Booking ID", "#${booking.id.substring(0, 8)}"), //
+                _buildRow("Booking ID", "#${_shortLabel(booking.id)}"), //
                 const SizedBox(height: 12),
                 _buildRow("Amount Paid", "₹${booking.amount.toStringAsFixed(2)}"), //
                 const SizedBox(height: 12),

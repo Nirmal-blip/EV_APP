@@ -11,6 +11,7 @@ class AuthService {
   // Listen to Auth State Changes
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
+
   // --- EMAIL LOGIN ---
   Future<UserCredential?> login(String email, String password) async {
     try {

@@ -66,9 +66,37 @@ class AdminHomeContent extends StatelessWidget {
                         _buildStatCard("Total Users", "$userCount Users", Icons.people_alt_rounded, Colors.blue.shade700),
                         
                         const SizedBox(height: 35),
-                        const Text("Management", style: TextStyle(color: Color(0xFF0F172A), fontSize: 18, fontWeight: FontWeight.bold)),
-                        _buildActionTile("Manage Stations", "Update Slot Pricing", Icons.ev_station_rounded),
-                        _buildActionTile("Booking Requests", "Active & Pending", Icons.calendar_month_rounded),
+                        const Text("User Bookings Activity", style: TextStyle(color: Color(0xFF0F172A), fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 15),
+                        ...userSnapshot.data!.docs.map((userDoc) {
+                           var userData = userDoc.data() as Map<String, dynamic>? ?? {};
+                           var userId = userDoc.id;
+                           
+                           // Find bookings for this user
+                           var userBookings = [];
+                           if (bookingSnapshot.hasData) {
+                             userBookings = bookingSnapshot.data!.docs
+                                 .map((b) => b.data() as Map<String, dynamic>)
+                                 .where((b) => b['userId'] == userId || b['customerUid'] == userId)
+                                 .toList();
+                           }
+
+                           userBookings.sort((a, b) {
+                               var timeA = a['createdAt'];
+                               var timeB = b['createdAt'];
+                               int msA = (timeA is Timestamp) ? timeA.millisecondsSinceEpoch : 0;
+                               int msB = (timeB is Timestamp) ? timeB.millisecondsSinceEpoch : 0;
+                               return msB.compareTo(msA);
+                           });
+
+                           var latestBooking = userBookings.isNotEmpty ? userBookings.first : null;
+                           int totalBookings = userBookings.length;
+                           
+                           String userName = userData['name'] ?? 'Anonymous';
+                           if (userName.isEmpty) userName = 'User';
+                           
+                           return _buildUserBookingTile(userName, latestBooking, totalBookings);
+                        }).toList(),
                         const SizedBox(height: 120),
                       ],
                     ),
@@ -137,6 +165,34 @@ class AdminHomeContent extends StatelessWidget {
         title: Text(title, style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w800, fontSize: 16)),
         subtitle: Text(sub, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.black26, size: 18),
+      ),
+    );
+  }
+
+  Widget _buildUserBookingTile(String userName, Map<String, dynamic>? latestBooking, int totalBookings) {
+    bool hasBooking = latestBooking != null;
+    String status = hasBooking ? (latestBooking['paymentStatus'] ?? 'pending').toString().toUpperCase() : '';
+    Color statusColor = status == 'COMPLETED' || status == 'SUCCESS' ? Colors.green : Colors.orange;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: const Color(0xFF28C76F).withOpacity(0.1),
+          child: Text(userName[0].toUpperCase(), style: const TextStyle(color: Color(0xFF28C76F), fontWeight: FontWeight.bold)),
+        ),
+        title: Text(userName, style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w800, fontSize: 16)),
+        subtitle: hasBooking
+            ? Text("Bookings: $totalBookings • Last: ₹${latestBooking['amount']} @ Station: ${latestBooking['stationId'] ?? 'N/A'}", style: TextStyle(color: Colors.grey.shade600, fontSize: 12))
+            : Text("No bookings yet", style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontStyle: FontStyle.italic)),
+        trailing: hasBooking
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                child: Text(status, style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
+              )
+            : const SizedBox(),
       ),
     );
   }
