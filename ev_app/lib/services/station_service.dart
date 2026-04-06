@@ -8,9 +8,14 @@ import 'dart:math';
 class StationService {
 
   // Fetch from OpenChargeMap REST API
-  Future<List<StationModel>> fetchLiveStations(double lat, double lng) async {
+  Future<List<StationModel>> fetchLiveStations({double? lat, double? lng}) async {
     final apiKey = dotenv.env['OCM_API_KEY'] ?? '';
-    final url = Uri.parse('https://api.openchargemap.io/v3/poi/?output=json&latitude=$lat&longitude=$lng&distance=5000&maxresults=200');
+    late Uri url;
+    if (lat != null && lng != null) {
+      url = Uri.parse('https://api.openchargemap.io/v3/poi/?output=json&latitude=$lat&longitude=$lng&distance=50&maxresults=200');
+    } else {
+      url = Uri.parse('https://api.openchargemap.io/v3/poi/?output=json&countrycode=IN&maxresults=10');
+    }
 
     try {
       // Fetch active Firebase bookings to cross-reference with OpenChargeMap
@@ -32,7 +37,13 @@ class StationService {
          print("Booking slots sync error: $e");
       }
 
-      final response = await http.get(url, headers: {'X-API-Key': apiKey});
+      final response = await http.get(
+        url, 
+        headers: {
+          'X-API-Key': apiKey,
+          'User-Agent': 'EVApp/1.0',
+        }
+      );
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((poi) {
@@ -78,14 +89,14 @@ class StationService {
     return [];
   }
 
-  // Get a stream of all stations around a given coordinate
-  Stream<List<StationModel>> getAllStations([double lat = 21.1702, double lng = 72.8311]) async* {
-    yield await fetchLiveStations(lat, lng);
+  // Get a stream of all stations around a given coordinate (or top India if null)
+  Stream<List<StationModel>> getAllStations({double? lat, double? lng}) async* {
+    yield await fetchLiveStations(lat: lat, lng: lng);
   }
 
   // Backwards compatibility for other potential usages
   Future<List<StationModel>> getNearbyStations(double lat, double lng, {double radiusInKm = 30.0}) async {
-    return fetchLiveStations(lat, lng);
+    return fetchLiveStations(lat: lat, lng: lng);
   }
 
   Future<StationModel?> getStationById(String stationId) async {

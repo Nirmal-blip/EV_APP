@@ -41,5 +41,5 @@ flutter:
   
   # Assets section (Spacing ka dhyan rakhna bhai)
   assets:
-    - assets/register.png  # Login/Signup image ke liye
+    - assets/  # Includes ev1-5.jpg and register.png
     - .env
