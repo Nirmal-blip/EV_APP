@@ -45,7 +45,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-primary/30 antialiased flex flex-col">
+        <div className="flex flex-col min-h-screen font-sans antialiased bg-slate-50 text-slate-900 selection:bg-primary/30">
           <Toaster position="top-right" />
           <Navbar />
           
@@ -85,3 +85,4 @@ function App() {
 }
 
 export default App;
+
