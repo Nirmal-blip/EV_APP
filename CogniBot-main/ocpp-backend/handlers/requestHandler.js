@@ -1,6 +1,8 @@
 const sendResponse = require("../utils/sendResponse");
 const db = require("../firebase");
 
+let nextOcppTransactionId = 1000;
+
 module.exports = async function handleRequest(
   ws,
   uniqueId,
@@ -22,33 +24,20 @@ module.exports = async function handleRequest(
 
       const stationDocBoot = await stationRefBoot.get();
 
-      const stationDataBoot = stationDocBoot.data();
-
-      // agar station exist nahi karta ya location missing hai
-      if (!stationDocBoot.exists || !stationDataBoot?.lat) {
-
-        console.log("Creating/updating dummy station with location:", chargePointId);
-
+      // No Firestore station doc until admin creates it (client/admin panel).
+      if (stationDocBoot.exists) {
         await stationRefBoot.set({
-          name: chargePointId,
-
-          lat: 23.0225,
-          lng: 72.5714,
-
-          availableSlots: 1,
-          pricePerHour: 0,
-          chargerType: "Unknown"
+          isOnline: true,
+          lastSeen: new Date(),
+          vendor: payload.chargePointVendor,
+          model: payload.chargePointModel
         }, { merge: true });
-
+      } else {
+        console.log(
+          "Skipping Firestore station write (not registered by admin yet):",
+          chargePointId
+        );
       }
-
-      // dynamic charger info update
-      await stationRefBoot.set({
-        isOnline: true,
-        lastSeen: new Date(),
-        vendor: payload.chargePointVendor,
-        model: payload.chargePointModel
-      }, { merge: true });
 
       sendResponse(ws, uniqueId, {
         status: "Accepted",
@@ -66,11 +55,11 @@ module.exports = async function handleRequest(
 
       console.log("Heartbeat received");
 
-      await db.collection("stations")
-        .doc(chargePointId)
-        .set({
-          lastSeen: new Date()
-        }, { merge: true });
+      const hbRef = db.collection("stations").doc(chargePointId);
+      const hbSnap = await hbRef.get();
+      if (hbSnap.exists) {
+        await hbRef.set({ lastSeen: new Date() }, { merge: true });
+      }
 
       sendResponse(ws, uniqueId, {
         currentTime: new Date().toISOString()
@@ -90,33 +79,19 @@ module.exports = async function handleRequest(
 
       const stationDoc = await stationRef.get();
 
-      const stationData = stationDoc.data();
-
-      // agar station exist nahi karta ya location missing hai
-      if (!stationDoc.exists || !stationData?.lat) {
-
-        console.log("Adding missing station location fields");
-
+      if (stationDoc.exists) {
         await stationRef.set({
-          name: chargePointId,
-
-          lat: 23.0225,
-          lng: 72.5714,
-
-          availableSlots: 1,
-          pricePerHour: 0,
-          chargerType: "Unknown"
+          status: payload.status,
+          connectorId: payload.connectorId,
+          errorCode: payload.errorCode,
+          lastSeen: new Date()
         }, { merge: true });
-
+      } else {
+        console.log(
+          "Skipping Firestore station status (not registered by admin yet):",
+          chargePointId
+        );
       }
-
-      // dynamic status update
-      await stationRef.set({
-        status: payload.status,
-        connectorId: payload.connectorId,
-        errorCode: payload.errorCode,
-        lastSeen: new Date()
-      }, { merge: true });
 
       sendResponse(ws, uniqueId, {});
 
@@ -146,9 +121,25 @@ module.exports = async function handleRequest(
 
       console.log("StartTransaction received:", payload);
 
-      const transactionRef = await db.collection("transactions")
+      const startStationSnap = await db.collection("stations").doc(chargePointId).get();
+      if (!startStationSnap.exists) {
+        console.log(
+          "StartTransaction: station not registered by admin, rejecting:",
+          chargePointId
+        );
+        sendResponse(ws, uniqueId, {
+          transactionId: 0,
+          idTagInfo: { status: "Invalid" }
+        });
+        break;
+      }
+
+      const ocppTransactionId = nextOcppTransactionId++;
+
+      await db.collection("transactions")
         .add({
           stationId: chargePointId,
+          ocppTransactionId,
           connectorId: payload.connectorId,
           userId: payload.idTag,
           meterStart: payload.meterStart,
@@ -157,7 +148,7 @@ module.exports = async function handleRequest(
         });
 
       sendResponse(ws, uniqueId, {
-        transactionId: transactionRef.id,
+        transactionId: ocppTransactionId,
         idTagInfo: {
           status: "Accepted"
         }
@@ -173,13 +164,23 @@ module.exports = async function handleRequest(
 
       console.log("StopTransaction received:", payload);
 
-      await db.collection("transactions")
-        .doc(payload.transactionId)
-        .update({
-          meterStop: payload.meterStop,
-          status: "completed",
-          endedAt: new Date()
-        });
+      const incomingTransactionId = Number(payload.transactionId);
+      if (Number.isFinite(incomingTransactionId)) {
+        const txSnap = await db.collection("transactions")
+          .where("ocppTransactionId", "==", incomingTransactionId)
+          .where("status", "==", "active")
+          .limit(1)
+          .get();
+
+        const txDoc = txSnap.docs[0];
+        if (txDoc) {
+          await txDoc.ref.update({
+            meterStop: payload.meterStop,
+            status: "completed",
+            endedAt: new Date()
+          });
+        }
+      }
 
       sendResponse(ws, uniqueId, {
         idTagInfo: {
@@ -197,12 +198,16 @@ module.exports = async function handleRequest(
 
       console.log("MeterValues:", payload);
 
-      await db.collection("meterValues")
-        .add({
-          stationId: chargePointId,
-          data: payload,
-          timestamp: new Date()
-        });
+      const mvStationRef = db.collection("stations").doc(chargePointId);
+      const mvStationSnap = await mvStationRef.get();
+      if (mvStationSnap.exists) {
+        await db.collection("meterValues")
+          .add({
+            stationId: chargePointId,
+            data: payload,
+            timestamp: new Date()
+          });
+      }
 
       sendResponse(ws, uniqueId, {});
 

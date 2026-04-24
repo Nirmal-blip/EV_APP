@@ -5,10 +5,13 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:9321',
+        // OCPP backend HTTP API (remote start/stop, etc.)
+        target: 'http://127.0.0.1:9221',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },
