@@ -1,26 +1,104 @@
+require("dotenv").config();
+
 const WebSocket = require("ws");
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
+const { v4: uuidv4 } = require("uuid");
 
 const handleRequest = require("./handlers/requestHandler");
 
-const PORT = process.env.PORT || 8080;
-
-// Express app
 const app = express();
+
+console.log("Express initialized successfully");
+
+/*
+========================
+HEALTH ROUTE (IMPORTANT)
+========================
+*/
+
+app.get("/", (req, res) => {
+  res.status(200).send("Railway backend alive 🚀");
+});
+
 app.use(cors());
 app.use(express.json());
 
-// Create HTTP server
+/*
+========================
+PORT CONFIG
+========================
+*/
+
+const PORT = process.env.PORT;
+
+/*
+========================
+CREATE HTTP + WS SERVER
+========================
+*/
+
 const server = http.createServer(app);
 
-// Attach WebSocket to same server
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({
+  server,
+  skipUTF8Validation: true,
+});
+
+console.log(`Server starting on port ${PORT}`);
 
 const chargers = {};
+const pendingCalls = new Map();
+const stationTelemetry = new Map();
 
-console.log(`🚀 Server starting on port ${PORT}`);
+/*
+========================
+TELEMETRY STORAGE
+========================
+*/
+
+function getTelemetry(stationId) {
+  if (!stationTelemetry.has(stationId)) {
+    stationTelemetry.set(stationId, {
+      lastSeenAt: null,
+      lastHeartbeatAt: null,
+      lastStatusNotification: null,
+      lastMeterValues: null,
+      lastRemoteStart: null,
+      lastRemoteStop: null,
+    });
+  }
+
+  return stationTelemetry.get(stationId);
+}
+
+/*
+========================
+STATUS COMPUTATION
+========================
+*/
+
+function computeStationStatus(stationId) {
+  const connected = Boolean(chargers[stationId]);
+  const telemetry = stationTelemetry.get(stationId) || null;
+
+  if (!connected) {
+    return { connected: false, status: "Unavailable", telemetry };
+  }
+
+  const lastStatus = telemetry?.lastStatusNotification?.status;
+
+  if (lastStatus === "Charging") {
+    return { connected: true, status: "Charging", telemetry };
+  }
+
+  if (lastStatus === "Preparing") {
+    return { connected: true, status: "Preparing", telemetry };
+  }
+
+  return { connected: true, status: "Available", telemetry };
+}
 
 /*
 ========================
@@ -30,27 +108,57 @@ CHARGER CONNECTION
 
 wss.on("connection", (ws, request) => {
 
-  console.log("🔥 New WS Connection:", request.url);
+  console.log("Incoming WS connection attempt:", request.url);
 
   const urlParts = request.url.split("/");
-  const chargePointId = urlParts[1] || "unknown";
+
+  let chargePointId;
+
+  if (urlParts[1] === "ocpp") {
+    chargePointId = urlParts[2];
+  } else if (urlParts[1] === "ws" && urlParts[2] === "1.6") {
+    chargePointId = urlParts[3];
+  } else {
+    chargePointId = urlParts[1];
+  }
 
   chargers[chargePointId] = ws;
 
-  console.log(`⚡ ChargePoint Connected: ${chargePointId}`);
+  console.log(`🔌 ChargePoint Connected: ${chargePointId}`);
 
   ws.on("message", async (message) => {
-    try {
-      const msg = JSON.parse(message.toString());
 
-      console.log("📩 Incoming:", msg);
+    try {
+
+      const msg = JSON.parse(message.toString());
 
       const messageTypeId = msg[0];
       const uniqueId = msg[1];
-      const action = msg[2];
-      const payload = msg[3] || {};
 
       if (messageTypeId === 2) {
+
+        const action = msg[2];
+        const payload = msg[3] || {};
+
+        const telemetry = getTelemetry(chargePointId);
+
+        telemetry.lastSeenAt = new Date().toISOString();
+
+        if (action === "Heartbeat") {
+          telemetry.lastHeartbeatAt = telemetry.lastSeenAt;
+        }
+
+        if (action === "StatusNotification") {
+          telemetry.lastStatusNotification = {
+            at: telemetry.lastSeenAt,
+            status: payload?.status,
+          };
+        }
+
+        if (action === "MeterValues") {
+          telemetry.lastMeterValues = payload;
+        }
+
         await handleRequest(
           ws,
           uniqueId,
@@ -58,16 +166,39 @@ wss.on("connection", (ws, request) => {
           payload,
           chargePointId
         );
+
+      }
+
+      if (messageTypeId === 3 || messageTypeId === 4) {
+
+        const pending = pendingCalls.get(uniqueId);
+
+        if (!pending) return;
+
+        pendingCalls.delete(uniqueId);
+
+        if (messageTypeId === 3) {
+          pending.resolve(msg[2] || {});
+        } else {
+          pending.reject(new Error("CallError"));
+        }
+
       }
 
     } catch (err) {
-      console.error("❌ Invalid message:", err);
+
+      console.error("Invalid message format:", err);
+
     }
+
   });
 
   ws.on("close", () => {
+
     delete chargers[chargePointId];
+
     console.log(`❌ ChargePoint Disconnected: ${chargePointId}`);
+
   });
 
 });
@@ -78,60 +209,109 @@ REMOTE START FUNCTION
 ========================
 */
 
-function remoteStartTransaction(stationId, connectorId, idTag) {
+function sendCallAndAwaitResult(stationId, action, payload) {
 
   const charger = chargers[stationId];
 
   if (!charger) {
-    console.log("⚠️ Charger not connected:", stationId);
-    return { status: "Rejected" };
+    throw new Error(`Charger not connected: ${stationId}`);
   }
 
   const message = [
     2,
-    Date.now().toString(),
-    "RemoteStartTransaction",
-    { connectorId, idTag }
+    uuidv4(),
+    action,
+    payload || {},
   ];
+
+  const uniqueId = message[1];
+
+  const resultPromise = new Promise((resolve, reject) => {
+
+    const timeoutId = setTimeout(() => {
+
+      pendingCalls.delete(uniqueId);
+
+      reject(new Error(`${action} timed out`));
+
+    }, 20000);
+
+    pendingCalls.set(uniqueId, {
+
+      resolve: (responsePayload) => {
+
+        clearTimeout(timeoutId);
+
+        resolve(responsePayload);
+
+      },
+
+      reject,
+
+    });
+
+  });
 
   charger.send(JSON.stringify(message));
 
-  console.log("🚀 RemoteStart sent →", stationId);
-
-  return { status: "Accepted" };
+  return resultPromise;
 }
 
 /*
 ========================
-HTTP API
+HTTP API ROUTES
 ========================
 */
 
-app.post("/remote-start", (req, res) => {
+app.get("/stations/:stationId/status", (req, res) => {
 
-  const { stationId, connectorId, idTag } = req.body;
+  const stationId = req.params.stationId;
 
-  const result = remoteStartTransaction(
+  res.json({
     stationId,
-    connectorId,
-    idTag
-  );
-
-  res.json(result);
+    ...computeStationStatus(stationId),
+  });
 
 });
 
-// Test route
-app.get("/", (req, res) => {
-  res.send("Backend running 🚀");
+app.post("/remote-start", async (req, res) => {
+
+  const { stationId } = req.body;
+
+  if (!stationId) {
+    return res.status(400).json({
+      error: "stationId required",
+    });
+  }
+
+  try {
+
+    const payload = await sendCallAndAwaitResult(
+      stationId,
+      "RemoteStartTransaction",
+      { connectorId: 1, idTag: "WEB_APP" }
+    );
+
+    res.json(payload);
+
+  } catch (error) {
+
+    res.status(500).json({
+      error: error.message,
+    });
+
+  }
+
 });
 
 /*
 ========================
-START SERVER (IMPORTANT)
+START SERVER
 ========================
 */
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
+
+  console.log(`🚀 Server running on Railway port ${PORT}`);
+
 });
