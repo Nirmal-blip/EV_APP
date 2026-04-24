@@ -1,3 +1,4 @@
+require("dotenv").config();
 const WebSocket = require("ws");
 const express = require("express");
 const cors = require("cors");
@@ -5,6 +6,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const handleRequest = require("./handlers/requestHandler");
 const db = require("./firebase");
+
 
 const PORT = 9321;
 const API_PORT = 9221;

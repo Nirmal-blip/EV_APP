@@ -1,7 +1,9 @@
 const admin = require("firebase-admin");
 
-// service account file load karo
-const serviceAccount = require("./serviceAccountKey.json");
+// Render environment variable se JSON load karo
+const serviceAccount = JSON.parse(
+  process.env.FIREBASE_SERVICE_ACCOUNT
+);
 
 // Firebase initialize karo
 admin.initializeApp({
