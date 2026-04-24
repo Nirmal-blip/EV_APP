@@ -7,22 +7,23 @@ const http = require("http");
 const { v4: uuidv4 } = require("uuid");
 
 const handleRequest = require("./handlers/requestHandler");
-const db = require("./firebase");
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+console.log("Express initialized successfully");
 
 /*
 ========================
-HEALTH CHECK ROUTE (IMPORTANT FOR RAILWAY)
+HEALTH ROUTE (IMPORTANT)
 ========================
 */
 
 app.get("/", (req, res) => {
-  res.send("OCPP backend running successfully 🚀");
+  res.status(200).send("Railway backend alive 🚀");
 });
+
+app.use(cors());
+app.use(express.json());
 
 /*
 ========================
@@ -30,15 +31,11 @@ PORT CONFIG
 ========================
 */
 
-const PORT = process.env.PORT || 8080;
-
-const REMOTE_START_TIMEOUT_MS = Number(
-  process.env.OCPP_REMOTE_START_TIMEOUT_MS || 20000
-);
+const PORT = process.env.PORT;
 
 /*
 ========================
-CREATE SHARED HTTP SERVER
+CREATE HTTP + WS SERVER
 ========================
 */
 
@@ -46,7 +43,7 @@ const server = http.createServer(app);
 
 const wss = new WebSocket.Server({
   server,
-  skipUTF8Validation: true
+  skipUTF8Validation: true,
 });
 
 console.log(`Server starting on port ${PORT}`);
@@ -72,6 +69,7 @@ function getTelemetry(stationId) {
       lastRemoteStop: null,
     });
   }
+
   return stationTelemetry.get(stationId);
 }
 
@@ -223,7 +221,7 @@ function sendCallAndAwaitResult(stationId, action, payload) {
     2,
     uuidv4(),
     action,
-    payload || {}
+    payload || {},
   ];
 
   const uniqueId = message[1];
@@ -236,7 +234,7 @@ function sendCallAndAwaitResult(stationId, action, payload) {
 
       reject(new Error(`${action} timed out`));
 
-    }, REMOTE_START_TIMEOUT_MS);
+    }, 20000);
 
     pendingCalls.set(uniqueId, {
 
@@ -248,7 +246,7 @@ function sendCallAndAwaitResult(stationId, action, payload) {
 
       },
 
-      reject
+      reject,
 
     });
 
@@ -257,7 +255,6 @@ function sendCallAndAwaitResult(stationId, action, payload) {
   charger.send(JSON.stringify(message));
 
   return resultPromise;
-
 }
 
 /*
@@ -272,7 +269,7 @@ app.get("/stations/:stationId/status", (req, res) => {
 
   res.json({
     stationId,
-    ...computeStationStatus(stationId)
+    ...computeStationStatus(stationId),
   });
 
 });
@@ -282,24 +279,25 @@ app.post("/remote-start", async (req, res) => {
   const { stationId } = req.body;
 
   if (!stationId) {
-    return res.status(400).json({ error: "stationId required" });
+    return res.status(400).json({
+      error: "stationId required",
+    });
   }
 
   try {
 
-    const payload =
-      await sendCallAndAwaitResult(
-        stationId,
-        "RemoteStartTransaction",
-        { connectorId: 1, idTag: "WEB_APP" }
-      );
+    const payload = await sendCallAndAwaitResult(
+      stationId,
+      "RemoteStartTransaction",
+      { connectorId: 1, idTag: "WEB_APP" }
+    );
 
     res.json(payload);
 
   } catch (error) {
 
     res.status(500).json({
-      error: error.message
+      error: error.message,
     });
 
   }
@@ -313,5 +311,7 @@ START SERVER
 */
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+
+  console.log(`🚀 Server running on Railway port ${PORT}`);
+
 });
