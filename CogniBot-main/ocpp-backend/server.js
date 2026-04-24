@@ -14,7 +14,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 9221;
+/*
+========================
+HEALTH CHECK ROUTE (IMPORTANT FOR RAILWAY)
+========================
+*/
+
+app.get("/", (req, res) => {
+  res.send("OCPP backend running successfully 🚀");
+});
+
+/*
+========================
+PORT CONFIG
+========================
+*/
+
+const PORT = process.env.PORT || 8080;
 
 const REMOTE_START_TIMEOUT_MS = Number(
   process.env.OCPP_REMOTE_START_TIMEOUT_MS || 20000
@@ -39,13 +55,18 @@ const chargers = {};
 const pendingCalls = new Map();
 const stationTelemetry = new Map();
 
+/*
+========================
+TELEMETRY STORAGE
+========================
+*/
+
 function getTelemetry(stationId) {
   if (!stationTelemetry.has(stationId)) {
     stationTelemetry.set(stationId, {
       lastSeenAt: null,
       lastHeartbeatAt: null,
       lastStatusNotification: null,
-      lastStartTransaction: null,
       lastMeterValues: null,
       lastRemoteStart: null,
       lastRemoteStop: null,
@@ -53,6 +74,12 @@ function getTelemetry(stationId) {
   }
   return stationTelemetry.get(stationId);
 }
+
+/*
+========================
+STATUS COMPUTATION
+========================
+*/
 
 function computeStationStatus(stationId) {
   const connected = Boolean(chargers[stationId]);
@@ -63,33 +90,9 @@ function computeStationStatus(stationId) {
   }
 
   const lastStatus = telemetry?.lastStatusNotification?.status;
-  const meter = telemetry?.lastMeterValues;
 
-  const sampled = Array.isArray(meter?.meterValue)
-    ? meter.meterValue[0]?.sampledValue
-    : null;
-
-  const powerKw = Array.isArray(sampled)
-    ? Number(
-        sampled.find(
-          (v) => v?.measurand === "Power.Active.Import"
-        )?.value
-      )
-    : NaN;
-
-  if (lastStatus === "Charging" || (Number.isFinite(powerKw) && powerKw > 0)) {
+  if (lastStatus === "Charging") {
     return { connected: true, status: "Charging", telemetry };
-  }
-
-  if (telemetry?.lastRemoteStart?.status === "Accepted") {
-    const startedAtMs = Date.parse(telemetry.lastRemoteStart.at || "");
-
-    if (
-      Number.isFinite(startedAtMs) &&
-      Date.now() - startedAtMs < 2 * 60 * 1000
-    ) {
-      return { connected: true, status: "Preparing", telemetry };
-    }
   }
 
   if (lastStatus === "Preparing") {
@@ -107,12 +110,19 @@ CHARGER CONNECTION
 
 wss.on("connection", (ws, request) => {
 
+  console.log("Incoming WS connection attempt:", request.url);
+
   const urlParts = request.url.split("/");
 
-  const chargePointId =
-    urlParts[1] === "ocpp"
-      ? urlParts[2]
-      : urlParts[1];
+  let chargePointId;
+
+  if (urlParts[1] === "ocpp") {
+    chargePointId = urlParts[2];
+  } else if (urlParts[1] === "ws" && urlParts[2] === "1.6") {
+    chargePointId = urlParts[3];
+  } else {
+    chargePointId = urlParts[1];
+  }
 
   chargers[chargePointId] = ws;
 
@@ -136,8 +146,9 @@ wss.on("connection", (ws, request) => {
 
         telemetry.lastSeenAt = new Date().toISOString();
 
-        if (action === "Heartbeat")
+        if (action === "Heartbeat") {
           telemetry.lastHeartbeatAt = telemetry.lastSeenAt;
+        }
 
         if (action === "StatusNotification") {
           telemetry.lastStatusNotification = {
@@ -168,10 +179,11 @@ wss.on("connection", (ws, request) => {
 
         pendingCalls.delete(uniqueId);
 
-        if (messageTypeId === 3)
+        if (messageTypeId === 3) {
           pending.resolve(msg[2] || {});
-        else
+        } else {
           pending.reject(new Error("CallError"));
+        }
 
       }
 
@@ -203,8 +215,9 @@ function sendCallAndAwaitResult(stationId, action, payload) {
 
   const charger = chargers[stationId];
 
-  if (!charger)
+  if (!charger) {
     throw new Error(`Charger not connected: ${stationId}`);
+  }
 
   const message = [
     2,
@@ -235,7 +248,7 @@ function sendCallAndAwaitResult(stationId, action, payload) {
 
       },
 
-      reject: reject
+      reject
 
     });
 
@@ -268,8 +281,9 @@ app.post("/remote-start", async (req, res) => {
 
   const { stationId } = req.body;
 
-  if (!stationId)
+  if (!stationId) {
     return res.status(400).json({ error: "stationId required" });
+  }
 
   try {
 
@@ -300,8 +314,6 @@ START SERVER
 
 server.listen(PORT, () => {
 
-  console.log(
-    `🚀 Server live at https://your-render-url.onrender.com`
-  );
+  console.log(`🚀 Server running on Railway port ${PORT}`);
 
 });
